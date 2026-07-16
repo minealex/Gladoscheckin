@@ -1,5 +1,4 @@
 import requests
-import json
 import os
 
 from pypushdeer import PushDeer
@@ -20,19 +19,19 @@ if __name__ == '__main__':
     cookies = os.environ.get("COOKIES", []).split("&")
     if cookies[0] != "":
 
-        check_in_url = "https://glados.space/api/user/checkin"        # 签到地址
-        status_url = "https://glados.space/api/user/status"          # 查看账户状态
+        check_in_url = "https://railgun.info/api/user/checkin"        # 签到地址
+        status_url = "https://railgun.info/api/user/status"          # 查看账户状态
 
-        referer = 'https://glados.space/console/checkin'
-        origin = "https://glados.space"
+        referer = 'https://railgun.info/console/checkin'
+        origin = "https://railgun.info"
         useragent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36"
         payload = {
-            'token': 'glados.one'
+            'token': 'railgun.info'
         }
         
         for cookie in cookies:
             checkin = requests.post(check_in_url, headers={'cookie': cookie, 'referer': referer, 'origin': origin,
-                                    'user-agent': useragent, 'content-type': 'application/json;charset=UTF-8'}, data=json.dumps(payload))
+                                    'user-agent': useragent}, data=payload)
             state = requests.get(status_url, headers={
                                 'cookie': cookie, 'referer': referer, 'origin': origin, 'user-agent': useragent})
 
