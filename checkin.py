@@ -19,14 +19,14 @@ if __name__ == '__main__':
     cookies = os.environ.get("COOKIES", []).split("&")
     if cookies[0] != "":
 
-        check_in_url = "https://railgun.info/api/user/checkin"        # 签到地址
-        status_url = "https://railgun.info/api/user/status"          # 查看账户状态
+        check_in_url = "https://glados.cloud/api/user/checkin"        # 签到地址
+        status_url = "https://glados.cloud/api/user/status"          # 查看账户状态
 
-        referer = 'https://railgun.info/console/checkin'
-        origin = "https://railgun.info"
+        referer = 'https://glados.cloud/console/checkin'
+        origin = "https://glados.cloud"
         useragent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36"
         payload = {
-            'token': 'railgun.info'
+            'token': 'glados.cloud'
         }
         
         for cookie in cookies:
