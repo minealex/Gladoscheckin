@@ -14,7 +14,12 @@
 
 1. 跳转至自己的仓库的`Settings`->`Secrets and variables`->`Action`
 
-2. 添加1个`repository secret`，命名为`COOKIES`，其值对应GLaDOS账号的cookie值中的有效部分（获取方式如下）
+2. 为每个网站添加独立的 `repository secret`：
+
+- `GLADOS_CLOUD_COOKIE`：只填写从 `glados.cloud` 复制的 Cookie。
+- `RAILGUN_INFO_COOKIE`：只填写从 `railgun.info` 复制的 Cookie。
+
+可以只配置其中一个。旧的 `COOKIES` 不再使用，避免把一个网站的登录凭据发送到另一个网站。
 
 - 在GLaDOS的签到页面按`F12`
 
@@ -28,7 +33,9 @@
 
 ![图片加载失败](imgs/3.png)
 
-- 多账号请在 `COOKIES` 中 添加多个 `cookies` 中间使用 `&`连接即可。（例如： `c1&c3&c3...`）
+- Cookie 属于敏感登录凭据，不要粘贴到聊天、Issue 或 Actions 日志中。
+- 代码推送只运行离线模拟测试，不会发送真实签到请求。
+- 定时签到每天执行一次；执行前先用状态接口验证 Cookie，认证失败时不会发送签到请求。
 
 3. 手机推送（非必须）
 
