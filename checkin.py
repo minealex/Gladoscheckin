@@ -45,15 +45,21 @@ if __name__ == '__main__':
                 # 解析返回的json数据
                 result = checkin.json()     
                 # 获取签到结果
-                check_result = result.get('message')
-                points = result.get('points')
+                check_result = str(result.get('message') or '')
+                points = result.get('points', 0)
 
                 # 获取账号当前状态
-                result = state.json()
+                state_data = {}
+                try:
+                    result = state.json()
+                    state_data = result.get('data') or {}
+                except (ValueError, AttributeError):
+                    pass
                 # 获取剩余时间
-                leftdays = int(float(result['data']['leftDays']))
+                leftdays_value = state_data.get('leftDays')
+                leftdays = int(float(leftdays_value)) if leftdays_value not in (None, '') else None
                 # 获取账号email
-                email = result['data']['email']
+                email = state_data.get('email', '')
                 
                 print(check_result)
                 if "Checkin! Got" in check_result:
