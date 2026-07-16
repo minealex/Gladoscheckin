@@ -1,102 +1,127 @@
-import requests
 import os
 
+import requests
 from pypushdeer import PushDeer
 
-# -------------------------------------------------------------------------------------------
-# github workflows
-# -------------------------------------------------------------------------------------------
-if __name__ == '__main__':
-    # pushdeer key 申请地址 https://www.pushdeer.com/product.html
-    sckey = os.environ.get("SENDKEY", "")
 
-    # 推送内容
-    title = ""
-    success, fail, repeats = 0, 0, 0        # 成功账号数量 失败账号数量 重复签到账号数量
-    context = ""
+DOMAINS = ("glados.cloud", "railgun.info")
 
-    # glados账号cookie 直接使用数组 如果使用环境变量需要字符串分割一下
-    cookies = os.environ.get("COOKIES", []).split("&")
-    if cookies[0] != "":
 
-        check_in_url = "https://glados.cloud/api/user/checkin"        # 签到地址
-        status_url = "https://glados.cloud/api/user/status"          # 查看账户状态
+def checkin(cookie):
+    """Try the supported domains and return the first authenticated result."""
+    useragent = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/102.0.0.0 Safari/537.36"
+    )
 
-        referer = 'https://glados.cloud/console/checkin'
-        origin = "https://glados.cloud"
-        useragent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36"
-        payload = {
-            'token': 'glados.cloud'
+    for domain in DOMAINS:
+        origin = f"https://{domain}"
+        headers = {
+            "cookie": cookie,
+            "referer": f"{origin}/console/checkin",
+            "origin": origin,
+            "user-agent": useragent,
         }
-        
-        for cookie in cookies:
-            checkin = requests.post(check_in_url, headers={'cookie': cookie, 'referer': referer, 'origin': origin,
-                                    'user-agent': useragent}, data=payload)
-            state = requests.get(status_url, headers={
-                                'cookie': cookie, 'referer': referer, 'origin': origin, 'user-agent': useragent})
 
-            message_status = ""
-            points = 0
-            message_days = ""
-            
-            
-            if checkin.status_code == 200:
-                # 解析返回的json数据
-                result = checkin.json()     
-                # 获取签到结果
-                check_result = str(result.get('message') or '')
-                points = result.get('points', 0)
+        try:
+            checkin_response = requests.post(
+                f"{origin}/api/user/checkin",
+                headers=headers,
+                data={"token": domain},
+                timeout=30,
+            )
+            checkin_response.raise_for_status()
+            checkin_data = checkin_response.json()
+        except (requests.RequestException, ValueError) as error:
+            print(f"{domain}: request failed: {error}")
+            continue
 
-                # 获取账号当前状态
-                state_data = {}
-                try:
-                    result = state.json()
-                    state_data = result.get('data') or {}
-                except (ValueError, AttributeError):
-                    pass
-                # 获取剩余时间
-                leftdays_value = state_data.get('leftDays')
-                leftdays = int(float(leftdays_value)) if leftdays_value not in (None, '') else None
-                # 获取账号email
-                email = state_data.get('email', '')
-                
-                print(check_result)
-                if "Checkin! Got" in check_result:
-                    success += 1
-                    message_status = "签到成功，会员点数 + " + str(points)
-                elif "Checkin Repeats!" in check_result:
-                    repeats += 1
-                    message_status = "重复签到，明天再来"
-                else:
-                    fail += 1
-                    message_status = "签到失败，请检查..."
+        code = checkin_data.get("code", -2)
+        message = str(checkin_data.get("message") or "")
+        if code not in (0, 1):
+            print(f"{domain}: {message or 'authentication failed'}")
+            continue
 
-                if leftdays is not None:
-                    message_days = f"{leftdays} 天"
-                else:
-                    message_days = "error"
-            else:
-                email = ""
-                message_status = "签到请求URL失败, 请检查..."
-                message_days = "error"
+        state_data = {}
+        try:
+            state_response = requests.get(
+                f"{origin}/api/user/status", headers=headers, timeout=30
+            )
+            if state_response.ok:
+                state_data = state_response.json().get("data") or {}
+        except (requests.RequestException, ValueError, AttributeError):
+            pass
 
-            context += "账号: " + email + ", P: " + str(points) +", 剩余: " + message_days + " | "
+        leftdays_value = state_data.get("leftDays")
+        leftdays = (
+            int(float(leftdays_value))
+            if leftdays_value not in (None, "")
+            else None
+        )
 
-        # 推送内容 
-        title = f'Glados, 成功{success},失败{fail},重复{repeats}'
-        print("Send Content:" + "\n", context)
-        
+        return {
+            "code": code,
+            "domain": domain,
+            "email": state_data.get("email", ""),
+            "leftdays": leftdays,
+            "message": message,
+            "points": checkin_data.get("points", 0),
+        }
+
+    return None
+
+
+def main():
+    sendkey = os.environ.get("SENDKEY", "")
+    cookies = [
+        cookie.strip()
+        for cookie in os.environ.get("COOKIES", "").split("&")
+        if cookie.strip()
+    ]
+
+    if not cookies:
+        print("未找到 COOKIES Secret")
+        raise SystemExit(1)
+
+    success = 0
+    repeats = 0
+    failures = 0
+    details = []
+
+    for index, cookie in enumerate(cookies, 1):
+        result = checkin(cookie)
+        if result is None:
+            failures += 1
+            details.append(f"账号 {index}: 认证失败，请更新 COOKIES Secret")
+            continue
+
+        if result["code"] == 0:
+            success += 1
+            status = f"签到成功，积分 +{result['points']}"
+        else:
+            repeats += 1
+            status = "今日已经签到"
+
+        days = f"{result['leftdays']} 天" if result["leftdays"] is not None else "未知"
+        account = result["email"] or f"账号 {index}"
+        details.append(
+            f"{account}: {status}，剩余 {days}，域名 {result['domain']}"
+        )
+
+    title = f"Railgun 签到：成功 {success}，重复 {repeats}，失败 {failures}"
+    content = "\n".join(details)
+    print(title)
+    print(content)
+
+    if sendkey:
+        PushDeer(pushkey=sendkey).send_text(title, desp=content)
     else:
-        # 推送内容 
-        title = f'# 未找到 cookies!'
+        print("未设置 SENDKEY，跳过推送")
 
-    print("sckey:", sckey)
-    print("cookies:", cookies)
-    
-    # 推送消息
-    # 未设置 sckey 则不进行推送
-    if not sckey:
-        print("Not push")
-    else:
-        pushdeer = PushDeer(pushkey=sckey) 
-        pushdeer.send_text(title, desp=context)
+    if failures:
+        raise SystemExit(1)
+
+
+if __name__ == "__main__":
+    main()
