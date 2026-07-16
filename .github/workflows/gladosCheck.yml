@@ -7,6 +7,7 @@ on:
     paths:
       - checkin.py
       - backup_gate.py
+      - schedule_jitter.py
       - tests/**
       - .github/workflows/gladosCheck.yml
   schedule:
@@ -65,6 +66,15 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - name: Calculate bounded schedule delay
+        id: jitter
+        env:
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+          MAX_JITTER_MINUTES: "20"
+        run: python schedule_jitter.py
+      - name: Wait inside the schedule window
+        if: github.event_name == 'schedule' && steps.jitter.outputs.delay_seconds != '0'
+        run: sleep "${{ steps.jitter.outputs.delay_seconds }}"
       - name: Install runtime dependency
         run: python -m pip install "requests>=2.32,<3"
       - name: Run check-in
