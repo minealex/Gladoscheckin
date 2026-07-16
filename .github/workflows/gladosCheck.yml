@@ -6,13 +6,16 @@ on:
     branches: [master]
     paths:
       - checkin.py
+      - backup_gate.py
       - tests/**
       - .github/workflows/gladosCheck.yml
   schedule:
-    # 04:00 UTC = 12:00 Asia/Shanghai. Run only once per day.
-    - cron: "0 4 * * *"
+    # 12:17 Asia/Shanghai primary; 18:43 Asia/Shanghai is backup-only.
+    - cron: "17 4 * * *"
+    - cron: "43 10 * * *"
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -33,10 +36,29 @@ jobs:
       - name: Run offline tests
         run: python -m unittest discover -s tests -v
 
+  gate:
+    name: backup decision
+    runs-on: ubuntu-latest
+    outputs:
+      run_checkin: ${{ steps.decision.outputs.run_checkin }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Decide whether production check-in is needed
+        id: decision
+        env:
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PRIMARY_CRON: "17 4 * * *"
+          WORKFLOW_FILE: gladosCheck.yml
+        run: python backup_gate.py
+
   checkin:
     name: production check-in
-    needs: test
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: [test, gate]
+    if: needs.gate.outputs.run_checkin == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
