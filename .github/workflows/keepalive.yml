@@ -1,21 +1,85 @@
 name: Keepalive Workflow
 
+# ---------------------------------------------------------------------------
+# 目的：阻止 GitHub 因“仓库连续 60 天无活动”而自动停用 scheduled workflow。
+#（官方策略：仓库 60 天无提交/PR 等活动后，cron 触发的 workflow 会被自动禁用）
+#
+# ⚠️ 不要再引用 gautamkrishnar/keepalive-workflow
+#    该 action 仓库已于 2025-04-21 被 GitHub 以「违反服务条款」封禁
+#    （API 返回 403: Repository access blocked / reason: tos）。
+#    任何引用它的 workflow 都会在 "Set up job" 阶段直接失败，作业 3 秒内报错。
+#
+# 本文件零第三方 action 依赖，全部使用 GitHub 官方 action + shell 实现同等能力：
+#   1) 自动重新启用被 GitHub 停用的 scheduled workflow
+#   2) 仓库闲置超过 30 天时，自动打一个心跳提交（确保永不到 60 天）
+# ---------------------------------------------------------------------------
+
 on:
   schedule:
-    # 每周一 00:00 自动检查一次
+    # 每周一 00:00 UTC = 北京时间周一 08:00
     - cron: "0 0 * * 1"
   workflow_dispatch:
+
+permissions:
+  actions: write   # 重新启用被停用的 workflow
+  contents: write  # 推送心跳提交
+
+concurrency:
+  group: keepalive
+  cancel-in-progress: false
 
 jobs:
   keepalive:
     name: Keepalive Workflow
     runs-on: ubuntu-latest
-    permissions:
-      actions: write
-      contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: gautamkrishnar/keepalive-workflow@v2
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          gh_token: ${{ secrets.GITHUB_TOKEN }}
-          time_elapsed: 45
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Re-enable scheduled workflows disabled by GitHub
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow list --all --json id,name,state \
+            --jq '.[] | select(.state != "active") | "\(.id)\t\(.name)"' > disabled.txt || true
+          if [ -s disabled.txt ]; then
+            while IFS=$'\t' read -r id name; do
+              echo "Re-enabling: ${name} (${id})"
+              gh workflow enable "${id}" || true
+            done < disabled.txt
+          else
+            echo "No disabled workflows."
+          fi
+
+      - name: Heartbeat commit when the repository has been idle
+        env:
+          IDLE_DAYS: "30"
+        run: |
+          set -euo pipefail
+          LAST_TS=$(git log -1 --format=%ct)
+          NOW_TS=$(date +%s)
+          IDLE=$(( (NOW_TS - LAST_TS) / 86400 ))
+          echo "Last commit was ${IDLE} day(s) ago (threshold: ${IDLE_DAYS})."
+
+          if [ "${IDLE}" -lt "${IDLE_DAYS}" ]; then
+            echo "Repository is still active. No heartbeat needed."
+            exit 0
+          fi
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > .keepalive
+          git add .keepalive
+          git commit -m "chore(keepalive): heartbeat [skip ci]"
+          git push
+
+      - name: Verify Actions state
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow list --all
