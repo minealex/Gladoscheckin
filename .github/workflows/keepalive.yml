@@ -12,6 +12,10 @@ name: Keepalive Workflow
 # 本文件零第三方 action 依赖，全部使用 GitHub 官方 action + shell 实现同等能力：
 #   1) 自动重新启用被 GitHub 停用的 scheduled workflow
 #   2) 仓库闲置超过 30 天时，自动打一个心跳提交（确保永不到 60 天）
+#
+# 版本说明：actions/checkout 用 v7（当前最新 v7.0.1）。
+#   不要降回 v4 —— v4 内部跑 Node 20，runner 会报 Node 20 弃用警告，
+#   且 GitHub 将于 2026-09 之后不再支持 Node 20 运行时。
 # ---------------------------------------------------------------------------
 
 on:
@@ -34,7 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: true
