@@ -61,6 +61,7 @@ jobs:
     needs: [test, gate]
     if: needs.gate.outputs.run_checkin == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
@@ -80,4 +81,12 @@ jobs:
       - name: Run check-in
         env:
           SITE_COOKIE: ${{ secrets.COOKIE || secrets.COOKIES }}
+          SENDKEY: ${{ secrets.SENDKEY }}
         run: python checkin.py
+      - name: Hint for common failures
+        if: failure()
+        run: |
+          echo "::notice::签到失败时请先看上一步 'Run check-in' 的输出："
+          echo "::notice::1) 认证失败 -> Cookie 过期/失效（GLaDOS 约 30 天），重新登录后更新 Secret"
+          echo "::notice::2) 未配置 Cookie Secret -> 检查仓库 Secret 名称是否为 COOKIE 或 COOKIES"
+          echo "::notice::3) 状态请求失败 -> 站点暂时不可用，备用窗口会自动再试一次"
