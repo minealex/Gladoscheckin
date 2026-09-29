@@ -143,8 +143,17 @@ def _load_session_payload(raw):
         return None
 
 
-def parse_session_expiry(cookie, now=None):
-    """Extract the session expiry from koa:sess, or None when unavailable."""
+# koa-session 自己的会话字段；其余 expire 类字段语义不确定（可能是账号到期时间）。
+SESSION_EXPIRY_KEYS = ("_expire", "_maxAge")
+UNCLEAR_EXPIRY_KEYS = ("expire", "exp", "expires")
+
+
+def session_expiry(cookie, now=None):
+    """Return (expiry or None, kind).
+
+    kind is "session" when the value comes from koa-session fields,
+    "unclear" when it comes from a generic expire field, "missing" otherwise.
+    """
     now = datetime.now(timezone.utc) if now is None else now
     for part in (cookie or "").split(";"):
         if "=" not in part:
@@ -154,46 +163,68 @@ def parse_session_expiry(cookie, now=None):
             continue
         payload = _load_session_payload(raw.strip())
         if not isinstance(payload, dict):
-            return None
-        for key in ("expire", "exp", "_expire", "expires", "maxAge"):
-            value = payload.get(key)
-            if isinstance(value, bool) or not isinstance(value, (int, float, str)):
-                continue
-            try:
-                seconds = float(value)
-            except (TypeError, ValueError):
-                continue
-            if key != "maxAge" and seconds > 1e11:  # milliseconds
-                seconds /= 1000.0
-            if key == "maxAge":
+            return None, "missing"
+        for keys, kind in (
+            (SESSION_EXPIRY_KEYS, "session"),
+            (UNCLEAR_EXPIRY_KEYS, "unclear"),
+        ):
+            for key in keys:
+                value = payload.get(key)
+                if isinstance(value, bool) or not isinstance(
+                    value, (int, float, str)
+                ):
+                    continue
+                try:
+                    seconds = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if key == "_maxAge":
+                    if seconds <= 0:
+                        continue
+                    return now + timedelta(seconds=seconds), kind
+                if key != "_maxAge" and seconds > 1e11:  # milliseconds
+                    seconds /= 1000.0
                 if seconds <= 0:
                     continue
-                return now + timedelta(seconds=seconds)
-            if seconds <= 0:
-                continue
-            return datetime.fromtimestamp(seconds, tz=timezone.utc)
-        return None
-    return None
+                return datetime.fromtimestamp(seconds, tz=timezone.utc), kind
+        return None, "missing"
+    return None, "missing"
+
+
+def parse_session_expiry(cookie, now=None):
+    """Extract the session expiry from koa:sess, or None when unavailable."""
+    return session_expiry(cookie, now)[0]
 
 
 def expiry_summary(cookie, now=None):
     """Human readable expiry line; never guesses when parsing fails."""
     now = datetime.now(timezone.utc) if now is None else now
-    expiry = parse_session_expiry(cookie, now)
+    expiry, kind = session_expiry(cookie, now)
     if expiry is None:
         return "未能从 Cookie 解析有效期（不影响签到，仅无法提前预警）"
     remaining_days = (expiry - now).total_seconds() / 86400.0
     stamp = expiry.astimezone().strftime("%Y-%m-%d %H:%M")
     if remaining_days <= 0:
-        return f"会话已于 {stamp} 过期（{abs(remaining_days):.1f} 天前）"
-    return f"会话有效期至 {stamp}，剩余 {remaining_days:.1f} 天"
+        if kind == "session":
+            return f"会话已于 {stamp} 过期（{abs(remaining_days):.1f} 天前）"
+        return f"Cookie 内到期字段为 {stamp}，已过期 {abs(remaining_days):.1f} 天"
+    if kind == "session":
+        return f"会话有效期至 {stamp}，剩余 {remaining_days:.1f} 天"
+    return (
+        f"Cookie 内到期字段为 {stamp}（剩余 {remaining_days:.1f} 天；"
+        "该字段可能是账号到期时间，不代表会话有效期）"
+    )
 
 
 def expiry_alert(cookie, now=None):
-    """Return an Actions annotation when the cookie is expired or expiring."""
+    """Return an Actions annotation when the cookie session is expired/expiring.
+
+    Only koa-session fields are trusted; a generic expire field can mean
+    account expiry and must not raise a false alarm.
+    """
     now = datetime.now(timezone.utc) if now is None else now
-    expiry = parse_session_expiry(cookie, now)
-    if expiry is None:
+    expiry, kind = session_expiry(cookie, now)
+    if expiry is None or kind != "session":
         return ""
     remaining_days = (expiry - now).total_seconds() / 86400.0
     if remaining_days <= 0:
@@ -278,10 +309,22 @@ def checkin_site(cookie, session=requests):
     state_data = status_payload.get("data")
     if not isinstance(state_data, dict) or not state_data:
         message = str(status_payload.get("message") or "未返回账户数据")
+        status_code = getattr(status_response, "status_code", None)
+        expiry, kind = session_expiry(cookie)
+        if kind == "session" and expiry is not None and expiry <= datetime.now(
+            timezone.utc
+        ):
+            reason = "Cookie 会话已过期"
+        else:
+            reason = (
+                "Cookie 未被服务端接受（会话已作废，或复制时缺少/截断了 "
+                "koa:sess、koa:sess.sig）"
+            )
         raise CheckinError(
-            f"认证失败：{message}（Cookie 无效或已过期；{describe_cookie(cookie)}；"
-            f"{expiry_summary(cookie)}；请重新登录 {origin} 复制新的 Cookie "
-            "并更新仓库 Secret COOKIE / COOKIES）"
+            f"认证失败：{message}（HTTP {status_code}；{reason}；"
+            f"{describe_cookie(cookie)}；{expiry_summary(cookie)}；"
+            f"请重新登录 {origin} 并完整复制 Cookie，更新仓库 Secret "
+            "COOKIE / COOKIES）"
         )
 
     # Deliberately no automatic retry to avoid duplicate check-in requests.
