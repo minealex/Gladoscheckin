@@ -98,6 +98,10 @@ def cookie_fingerprint(cookie):
         "fields": fields,
         "has_session": "koa:sess" in fields,
         "has_signature": "koa:sess.sig" in fields,
+        # GLaDOS 在 2026-09 前后把登录会话迁到了 gld:sess；只有旧的
+        # koa:sess 时，状态接口会返回 code=-2「没有权限」。
+        "has_gld_session": "gld:sess" in fields,
+        "has_gld_signature": "gld:sess.sig" in fields,
         "sha256": hashlib.sha256(value.encode("utf-8")).hexdigest()[:8],
     }
 
@@ -107,10 +111,10 @@ def describe_cookie(cookie):
     fingerprint = cookie_fingerprint(cookie)
     fields = ",".join(fingerprint["fields"][:6]) or "-"
     flags = []
-    if not fingerprint["has_session"]:
-        flags.append("缺少 koa:sess")
-    if not fingerprint["has_signature"]:
-        flags.append("缺少 koa:sess.sig")
+    if not fingerprint["has_gld_session"]:
+        flags.append("缺少 gld:sess")
+    if not fingerprint["has_gld_signature"]:
+        flags.append("缺少 gld:sess.sig")
     suffix = f"（{'，'.join(flags)}）" if flags else ""
     return (
         f"长度 {fingerprint['length']} 字符 | 字段 {fields} | "
@@ -311,7 +315,12 @@ def checkin_site(cookie, session=requests):
         message = str(status_payload.get("message") or "未返回账户数据")
         status_code = getattr(status_response, "status_code", None)
         expiry, kind = session_expiry(cookie)
-        if kind == "session" and expiry is not None and expiry <= datetime.now(
+        if not cookie_fingerprint(cookie)["has_gld_session"]:
+            reason = (
+                "Cookie 缺少 gld:sess（站点现已改用 gld:sess 鉴权，"
+                "只带旧的 koa:sess 会被拒绝）"
+            )
+        elif kind == "session" and expiry is not None and expiry <= datetime.now(
             timezone.utc
         ):
             reason = "Cookie 会话已过期"
