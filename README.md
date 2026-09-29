@@ -29,6 +29,7 @@
 ![图片加载失败](imgs/3.png)
 
 - Cookie 必须放在同一行，键值之间使用分号和空格；不要使用 `&` 拼接多个账号。
+- **Cookie 必须包含 `gld:sess` 和 `gld:sess.sig`**：GLaDOS 于 2026-09 前后把登录会话从 `koa:sess` 迁到了 `gld:sess`，只复制旧的 `koa:sess` 会被服务端拒绝（返回「没有权限」）。最稳妥的做法是把 Request Headers 里的 Cookie **整行**复制下来。
 - Cookie 属于敏感登录凭据，不要粘贴到聊天、Issue 或 Actions 日志中。
 - 代码推送只运行离线模拟测试，不会发送真实签到请求。
 - 主任务在北京时间 12:17–12:37 的有界随机窗口内执行；18:43–19:03 的备用窗口仅在当天主任务未成功时启用。
@@ -53,7 +54,7 @@ GLaDOS 签到失败：认证失败：没有权限（Cookie 无效或已过期；
 
 | 日志关键字 | 原因 | 处理 |
 | --- | --- | --- |
-| `认证失败` / `没有权限` | Cookie 已过期或失效（最常见，GLaDOS 会话约 30 天过期） | 重新登录 [glados.cloud](https://glados.cloud)，按上面第 2 步重新复制 Cookie，更新 Secret |
+| `认证失败` / `没有权限` | Cookie 里缺少 `gld:sess`（最常见）或会话已作废 | 重新登录 [glados.cloud](https://glados.cloud)，**整行复制** Cookie（须含 `gld:sess` 与 `gld:sess.sig`），更新 Secret |
 | `未配置 Cookie Secret` | Secret 名称不对或值被清空 | Secret 名称必须是 `COOKIE` 或 `COOKIES` |
 | `Cookie 必须是单行` | 复制时带上了换行 | 粘贴前先压成一行，键值之间用 `; ` 分隔 |
 | `状态请求失败` | 站点临时不可用或网络抖动 | 只读请求会自动重试 3 次；仍失败则等当天 18:43 的备用窗口 |
