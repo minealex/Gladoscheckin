@@ -11,9 +11,38 @@ import checkin
 NOW = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
 
 
-def session_cookie(payload):
+def session_cookie(payload, gld=True):
     encoded = base64.b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
-    return f"koa:sess={encoded}; koa:sess.sig=signature"
+    cookie = f"koa:sess={encoded}; koa:sess.sig=signature"
+    if gld:
+        cookie += "; gld:sess=gld_demo; gld:sess.sig=gldsig"
+    return cookie
+
+
+class FakeResponse:
+    def __init__(self, payload, status_code=200):
+        self.payload = payload
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self.payload
+
+
+class FakeSession:
+    def __init__(self, status_payload):
+        self.status_payload = status_payload
+        self.calls = []
+
+    def get(self, url, **kwargs):
+        self.calls.append(("GET", url))
+        return FakeResponse(self.status_payload)
+
+    def post(self, url, **kwargs):
+        self.calls.append(("POST", url))
+        return FakeResponse({"code": 0, "message": "Checkin!"})
 
 
 class RecordingSession:
@@ -28,17 +57,33 @@ class RecordingSession:
 
 class CookieDiagnosticsTests(unittest.TestCase):
     def test_fingerprint_reports_session_fields(self):
-        fingerprint = checkin.cookie_fingerprint(session_cookie({"expire": 1}))
+        fingerprint = checkin.cookie_fingerprint(session_cookie({"_expire": 1}))
 
         self.assertTrue(fingerprint["has_session"])
         self.assertTrue(fingerprint["has_signature"])
+        self.assertTrue(fingerprint["has_gld_session"])
+        self.assertTrue(fingerprint["has_gld_signature"])
         self.assertEqual(len(fingerprint["sha256"]), 8)
 
-    def test_fingerprint_flags_missing_session(self):
+    def test_fingerprint_flags_missing_current_session(self):
         fingerprint = checkin.cookie_fingerprint("foo=bar")
 
-        self.assertFalse(fingerprint["has_session"])
-        self.assertIn("缺少 koa:sess", checkin.describe_cookie("foo=bar"))
+        self.assertFalse(fingerprint["has_gld_session"])
+        self.assertIn("缺少 gld:sess", checkin.describe_cookie("foo=bar"))
+
+    def test_legacy_cookie_without_gld_session_is_flagged(self):
+        legacy = session_cookie({"_expire": 1}, gld=False)
+
+        self.assertIn("缺少 gld:sess", checkin.describe_cookie(legacy))
+
+    def test_auth_failure_hints_missing_gld_session(self):
+        session = FakeSession({"code": -2, "message": "没有权限"})
+        legacy = session_cookie({"_expire": 1}, gld=False)
+
+        with self.assertRaisesRegex(checkin.CheckinError, "gld:sess"):
+            checkin.checkin_site(legacy, session=session)
+
+        self.assertEqual([call[0] for call in session.calls], ["GET"])
 
     def test_description_never_leaks_the_cookie_value(self):
         secret = session_cookie({"token": "super-secret-value"})
