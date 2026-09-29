@@ -68,6 +68,27 @@ class CookieDiagnosticsTests(unittest.TestCase):
             (expiry - NOW).total_seconds() / 86400.0, 3.0, delta=0.1
         )
 
+    def test_session_field_takes_priority_over_generic_expire(self):
+        expire_ms = int((NOW + timedelta(days=2)).timestamp() * 1000)
+        payload = {"_expire": expire_ms, "expire": int((NOW + timedelta(days=300)).timestamp() * 1000)}
+
+        expiry, kind = checkin.session_expiry(session_cookie(payload), now=NOW)
+
+        self.assertEqual(kind, "session")
+        self.assertAlmostEqual((expiry - NOW).total_seconds() / 86400.0, 2.0, delta=0.1)
+
+    def test_generic_expire_field_is_marked_unclear(self):
+        expire_ms = int((NOW + timedelta(days=224)).timestamp() * 1000)
+
+        expiry, kind = checkin.session_expiry(
+            session_cookie({"expire": expire_ms}), now=NOW
+        )
+
+        self.assertEqual(kind, "unclear")
+        self.assertIn("不代表会话有效期", checkin.expiry_summary(
+            session_cookie({"expire": expire_ms}), now=NOW
+        ))
+
     def test_expiry_returns_none_for_unreadable_cookie(self):
         self.assertIsNone(checkin.parse_session_expiry("koa:sess=not-base64!!"))
         self.assertIsNone(checkin.parse_session_expiry("nothing=here"))
@@ -95,7 +116,7 @@ class CookieDiagnosticsTests(unittest.TestCase):
         expire_ms = int((NOW - timedelta(days=1)).timestamp() * 1000)
 
         alert = checkin.expiry_alert(
-            session_cookie({"expire": expire_ms}), now=NOW
+            session_cookie({"_expire": expire_ms}), now=NOW
         )
 
         self.assertTrue(alert.startswith("::error::"))
@@ -104,13 +125,21 @@ class CookieDiagnosticsTests(unittest.TestCase):
         expire_ms = int((NOW + timedelta(days=3)).timestamp() * 1000)
 
         alert = checkin.expiry_alert(
-            session_cookie({"expire": expire_ms}), now=NOW
+            session_cookie({"_expire": expire_ms}), now=NOW
         )
 
         self.assertTrue(alert.startswith("::warning::"))
 
     def test_no_alert_for_fresh_cookie(self):
         expire_ms = int((NOW + timedelta(days=25)).timestamp() * 1000)
+
+        self.assertEqual(
+            checkin.expiry_alert(session_cookie({"_expire": expire_ms}), now=NOW),
+            "",
+        )
+
+    def test_no_alert_when_only_an_unclear_expire_field_exists(self):
+        expire_ms = int((NOW + timedelta(days=1)).timestamp() * 1000)
 
         self.assertEqual(
             checkin.expiry_alert(session_cookie({"expire": expire_ms}), now=NOW),
