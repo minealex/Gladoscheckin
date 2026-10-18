@@ -11,9 +11,21 @@ on:
       - tests/**
       - .github/workflows/gladosCheck.yml
   schedule:
-    # 12:17 Asia/Shanghai primary; 18:43 Asia/Shanghai is backup-only.
-    - cron: "17 4 * * *"
-    - cron: "43 10 * * *"
+    # GitHub Actions 的 schedule 事件是"尽力而为"：官方文档明确说明高负载期会被延迟，
+    # 负载足够高时"部分排队的作业会被丢弃"，且不会产生任何失败记录（连 run 都没有）。
+    # 2026-10 期间平台级退化，第三方实测 15 分钟粒度的工作流只有约 64% 的时段真正产生 run。
+    # 因此这里从 2 个窗口加密到 4 个，靠 backup_gate.py 去重：
+    # 同一天（UTC）只要已经有一个 schedule 运行成功，其余窗口自动跳过。
+    # 时间统一用 Asia/Shanghai，避免 UTC / 北京时间换算错误。
+    # 分钟数刻意避开 :00 和 :30（官方指出每小时开头是负载高峰）。
+    - cron: "17 12 * * *"
+      timezone: "Asia/Shanghai"   # 12:17 主窗口
+    - cron: "43 18 * * *"
+      timezone: "Asia/Shanghai"   # 18:43 备用窗口
+    - cron: "23 21 * * *"
+      timezone: "Asia/Shanghai"   # 21:23 兜底窗口
+    - cron: "47 0 * * *"
+      timezone: "Asia/Shanghai"   # 00:47 凌晨兜底窗口
 
 permissions:
   actions: read
@@ -52,7 +64,7 @@ jobs:
         env:
           EVENT_SCHEDULE: ${{ github.event.schedule }}
           GITHUB_TOKEN: ${{ github.token }}
-          PRIMARY_CRON: "17 4 * * *"
+          PRIMARY_CRON: "17 12 * * *"
           WORKFLOW_FILE: gladosCheck.yml
         run: python backup_gate.py
 
@@ -90,3 +102,5 @@ jobs:
           echo "::notice::1) 认证失败 -> Cookie 过期/失效（GLaDOS 约 30 天），重新登录后更新 Secret"
           echo "::notice::2) 未配置 Cookie Secret -> 检查仓库 Secret 名称是否为 COOKIE 或 COOKIES"
           echo "::notice::3) 状态请求失败 -> 站点暂时不可用，备用窗口会自动再试一次"
+          echo "::notice::4) 完全没有产生 run -> GitHub schedule 被延迟/丢弃，属平台侧问题，"
+          echo "::notice::   等待下一个窗口，或去 Actions 页面手动 Run workflow 补一次。"
