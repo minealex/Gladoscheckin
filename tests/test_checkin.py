@@ -105,9 +105,10 @@ class CheckinTests(unittest.TestCase):
         self.assertEqual([call[0] for call in session.calls], ["GET", "POST"])
 
     def test_cookie_and_cookies_secret_names_are_compatible(self):
+        # 多 secret 合并（支持多账号），用 & 连接
         self.assertEqual(
             checkin.cookie_from_environment({"COOKIE": "one", "COOKIES": "two"}),
-            "one",
+            "one&two",
         )
         self.assertEqual(
             checkin.cookie_from_environment({"COOKIES": "two"}),
