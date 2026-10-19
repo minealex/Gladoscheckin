@@ -93,6 +93,9 @@ jobs:
       - name: Run check-in
         env:
           SITE_COOKIE: ${{ secrets.COOKIE || secrets.COOKIES }}
+          COOKIES_2: ${{ secrets.COOKIES_2 }}
+          COOKIES_3: ${{ secrets.COOKIES_3 }}
+          COOKIES_4: ${{ secrets.COOKIES_4 }}
           SENDKEY: ${{ secrets.SENDKEY }}
         run: python checkin.py
       - name: Hint for common failures
