@@ -15,7 +15,10 @@ import requests
 SITE_DOMAIN = "glados.cloud"
 SITE_LABEL = "GLaDOS"
 REQUEST_TIMEOUT = 20
-COOKIE_ENV_NAMES = ("SITE_COOKIE", "COOKIE", "COOKIES")
+COOKIE_ENV_NAMES = (
+    "SITE_COOKIE", "COOKIE", "COOKIES",
+    "COOKIES_2", "COOKIES_3", "COOKIES_4",
+)
 
 # 只读的状态接口可以安全重试（不改变账号状态）；签到接口保持零重试，
 # 避免网络抖动时重复提交签到请求。
@@ -69,20 +72,23 @@ def _response_hint(response):
 
 
 def cookie_from_environment(environ: Mapping[str, str]):
-    """Support both existing COOKIE and COOKIES repository secrets."""
+    """收集所有 Cookie secret 并用 & 合并，支持多账号/多 secret。
+
+    支持 COOKIE / COOKIES / COOKIES_2..4，每个 secret 内部也可用 & 分隔多账号。
+    合并后再由 parse_accounts 统一解析。
+    """
+    parts = []
     for variable in COOKIE_ENV_NAMES:
         cookie = environ.get(variable, "").strip()
         if cookie:
-            return cookie
-    return ""
+            parts.append(cookie)
+    return "&".join(parts)
 
 
 def cookie_source_name(environ: Mapping[str, str]):
-    """Report which secret actually supplied the cookie."""
-    for variable in COOKIE_ENV_NAMES:
-        if environ.get(variable, "").strip():
-            return variable
-    return ""
+    """Report which secrets actually supplied the cookies."""
+    names = [v for v in COOKIE_ENV_NAMES if environ.get(v, "").strip()]
+    return "+".join(names) or ""
 
 
 def cookie_fingerprint(cookie):
