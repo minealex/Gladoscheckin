@@ -286,15 +286,16 @@ def _request_status(session, url, headers):
     raise CheckinError("状态请求失败：未知错误")
 
 
-def checkin_site(cookie, session=requests):
+def checkin_site(cookie, session=requests, domain=None):
     """Validate authentication, then send at most one check-in request."""
+    domain = domain or SITE_DOMAIN
     cookie = cookie.strip()
     if not cookie:
         raise CheckinError("Cookie 为空")
     if "\r" in cookie or "\n" in cookie:
         raise CheckinError("Cookie 必须是单行，键值之间使用分号和空格")
 
-    origin = f"https://{SITE_DOMAIN}"
+    origin = f"https://{domain}"
     headers = {
         "cookie": cookie,
         "referer": f"{origin}/console/checkin",
@@ -342,7 +343,7 @@ def checkin_site(cookie, session=requests):
         checkin_response = session.post(
             f"{origin}/api/user/checkin",
             headers=headers,
-            data={"token": SITE_DOMAIN},
+            data={"token": domain},
             timeout=REQUEST_TIMEOUT,
         )
         checkin_response.raise_for_status()
@@ -375,47 +376,93 @@ def checkin_site(cookie, session=requests):
     )
 
 
+def parse_accounts(environ: Mapping[str, str]):
+    """解析多账号 Cookie 配置。
+
+    支持三种格式（多账号用 & 分隔）：
+      1) 单账号整段 Cookie（向后兼容原有 secret）
+      2) 多账号，每段一个 Cookie，域名统一用 SITE_DOMAIN
+      3) 每账号可指定域名：域名|Cookie
+    """
+    raw = cookie_from_environment(environ)
+    accounts = []
+    for part in raw.split("&"):
+        part = part.strip()
+        if not part:
+            continue
+        if "|" in part:
+            domain, cookie = part.split("|", 1)
+            domain = (domain or "").strip() or SITE_DOMAIN
+            cookie = cookie.strip()
+        else:
+            domain, cookie = SITE_DOMAIN, part
+        if cookie:
+            accounts.append((domain, cookie))
+    return accounts
+
+
 def main(environ=None):
     environ = os.environ if environ is None else environ
-    cookie = cookie_from_environment(environ)
+    accounts = parse_accounts(environ)
     sendkey = ""
     for variable in PUSH_ENV_NAMES:
         sendkey = environ.get(variable, "").strip()
         if sendkey:
             break
 
-    if not cookie:
+    if not accounts:
         message = (
             "未配置 Cookie Secret：请在仓库 Settings -> Secrets and variables -> "
-            "Actions 中设置 COOKIE 或 COOKIES"
+            "Actions 中设置 COOKIE 或 COOKIES；多账号用 & 分隔，"
+            "可选写成 域名|Cookie 以指定各自域名"
         )
         print(f"{SITE_LABEL} 签到失败：{message}")
         send_push(sendkey, f"{SITE_LABEL} 签到失败", message)
         raise SystemExit(1)
 
     print(f"Cookie 来源：{cookie_source_name(environ) or '未识别'}"
-          f" | {describe_cookie(cookie)}")
-    print(f"Cookie 有效期：{expiry_summary(cookie)}")
-    alert = expiry_alert(cookie)
-    if alert:
-        print(alert)
+          f" | 账号数 {len(accounts)}")
+    success_lines = []
+    failures = []
 
-    try:
-        result = checkin_site(cookie)
-    except CheckinError as error:
-        message = f"{SITE_LABEL} 签到失败：{error}"
-        print(message)
-        send_push(sendkey, f"{SITE_LABEL} 签到失败", message)
+    for idx, (domain, cookie) in enumerate(accounts, 1):
+        print(f"\n--- 账号 {idx}/{len(accounts)}（{domain}）---")
+        print(f"Cookie 详情：{describe_cookie(cookie)}")
+        print(f"Cookie 有效期：{expiry_summary(cookie)}")
+        alert = expiry_alert(cookie)
+        if alert:
+            print(alert)
+
+        try:
+            result = checkin_site(cookie, domain=domain)
+        except CheckinError as error:
+            message = f"{SITE_LABEL} | {domain} | 签到失败：{error}"
+            print(message)
+            failures.append(message)
+            continue
+
+        account = result.email or domain
+        days = f"{result.leftdays} 天" if result.leftdays is not None else "未知"
+        line = (
+            f"{SITE_LABEL} | {domain} | {account} | {result.status} | "
+            f"积分 +{result.points} | 剩余 {days}"
+        )
+        print(line)
+        success_lines.append(line)
+
+    body = "\n".join(success_lines + failures)
+    if failures:
+        send_push(
+            sendkey,
+            f"{SITE_LABEL} 签到异常（失败 {len(failures)}/{len(accounts)}）",
+            body,
+        )
         raise SystemExit(1)
-
-    account = result.email or SITE_DOMAIN
-    days = f"{result.leftdays} 天" if result.leftdays is not None else "未知"
-    line = (
-        f"{SITE_LABEL} | {account} | {result.status} | "
-        f"积分 +{result.points} | 剩余 {days}"
+    send_push(
+        sendkey,
+        f"{SITE_LABEL} 全部签到成功（{len(accounts)} 账号）",
+        body,
     )
-    print(line)
-    send_push(sendkey, f"{SITE_LABEL} {result.status}", line)
 
 
 if __name__ == "__main__":
