@@ -2,17 +2,24 @@ import json
 import os
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 def _parse_github_time(value):
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+# GLaDOS / Railgun 按北京时间（UTC+8）定义"签到日"。
+# backup_gate 必须用同一时区判断"今天"，否则 UTC 与北京时间跨天（差 8 小时）时，
+# 会把新一天的签到误判为"今天已签"而跳过，导致漏签。
+LOCAL_TZ = timezone(timedelta(hours=8))
+
+
 def successful_schedule_today(runs, now, current_run_id):
-    start_of_day = now.astimezone(timezone.utc).replace(
+    # 按北京时间当天 00:00 起算（与 GLaDOS 签到日一致），而非 UTC。
+    start_of_day = now.astimezone(LOCAL_TZ).replace(
         hour=0, minute=0, second=0, microsecond=0
-    )
+    ).astimezone(timezone.utc)
     for run in runs:
         if run.get("event") != "schedule":
             continue
